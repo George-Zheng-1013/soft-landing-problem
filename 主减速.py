@@ -6,20 +6,22 @@ plt.rcParams['font.sans-serif'] = ['SimHei', 'Microsoft YaHei', 'Arial Unicode M
 plt.rcParams['axes.unicode_minus'] = False
 
 # --- 2. 定义物理常量和初始/终端条件 (有单位) ---
-mu = 4.903e12  # 月球引力常数 (m^3/s^2)
+G= 6.67430e-11  # 万有引力常数 (m^3/kg/s^2)
+M=7.34767309e22  # 月球质量 (kg)
 Isp = 316.0      # 发动机比冲 (s)
 g_e = 9.81     # 地球海平面重力加速度 (m/s^2)
+mu=2940
 
 # 初始状态 (SI 单位)
 R0_dim = 1753000.0   # m (初始轨道半径)
-V_r0_dim = 0.0       # m/s (径向速度)
-V_t0_dim = 1692.0    # m/s (切向速度)
+V_y0_dim = 0.0       # m/s (径向速度)
+V_x0_dim = 1692.0    # m/s (切向速度)
 M0_dim = 750.0       # kg
 
 # 终端状态 (SI 单位)
 Rf_dim = 1741030.0   # m
-Vr_f_max = 1.5       # m/s (径向速度约束)
-Vt_f_max = 3.8       # m/s (切向速度约束)
+Vy_f_max = 1.5       # m/s (径向速度约束)
+Vx_f_max = 3.8       # m/s (切向速度约束)
 
 # 推力约束 (SI 单位)
 F_max_dim = 1750.0   # N
@@ -32,10 +34,10 @@ TU = np.sqrt(DU**3 / mu)
 VU = DU / TU
 FU = MU * DU / TU**2
 Rf_norm = Rf_dim / DU
-Vr0_norm = V_r0_dim / VU
-Vt0_norm = V_t0_dim / VU
-Vr_f_norm_max = Vr_f_max / VU
-Vt_f_norm_max = Vt_f_max / VU
+Vy0_norm = V_y0_dim / VU
+Vx0_norm = V_x0_dim / VU
+Vy_f_norm_max = Vy_f_max / VU
+Vx_f_norm_max = Vx_f_max / VU
 F_max_norm = F_max_dim / FU
 F_min_norm = F_min_dim / FU
 C_thrust = (TU * FU) / (MU * Isp * g_e)
@@ -45,11 +47,12 @@ N = 400
 opti = ca.Opti()
 
 # 定义状态变量 X_norm (无量纲)
-X_norm = opti.variable(4, N + 1)
-r    = X_norm[0, :]
-v_r  = X_norm[1, :]
-v_t  = X_norm[2, :]
-m    = X_norm[3, :]
+X_norm = opti.variable(5, N + 1)
+r= X_norm[0, :]  # 无量纲半径
+v_x= X_norm[1, :]  # 无量纲切向速度
+v_y= X_norm[2, :]  # 无量纲径向速度
+m= X_norm[3, :]  # 无量纲质量
+v= X_norm[4, :]  # 无量纲速度
 
 # 定义控制变量 U_ctrl (无量纲推力 + 角度)
 U_ctrl = opti.variable(2, N)
@@ -62,17 +65,18 @@ T_final = opti.variable()
 # 目标函数：最大化最终质量
 opti.minimize(-m[N])
 
-# --- 5. 动力学约束 (与之前相同) ---
+# --- 5. 动力学约束 ---
 dt_norm = (T_final / TU) / N
 
 def dynamics_norm_2d(X_state, U_control):
-    r_n, vr_n, vt_n, m_n = X_state[0], X_state[1], X_state[2], X_state[3]
-    f_n, Theta_n = U_control[0], U_control[1]
-    r_dot = vr_n
-    vr_dot = (f_n * ca.cos(Theta_n)) / m_n - 1 / r_n**2 + vt_n**2 / r_n
-    vt_dot = (f_n * ca.sin(Theta_n)) / m_n - vr_n * vt_n / r_n
-    m_dot = -C_thrust * f_n
-    return ca.vertcat(r_dot, vr_dot, vt_dot, m_dot)
+    r, v_y, v_x, m, v = X_state
+    f, Theta = U_control
+    r_dot = v_y
+    m_dot = f / mu
+    v_dot = f / (M0_dim - m_dot * t)
+    v_y_dot=-G*M / r**2 + v_x**2 / r + v_dot*np.sin(Theta)
+    v_x_dot = v_dot * np.cos(Theta) - v_y * v_x / r
+    return ca.vertcat(r_dot, v_y_dot, v_x_dot, m_dot, v_dot)
 
 for k in range(N):
     k1 = dynamics_norm_2d(X_norm[:, k], U_ctrl[:, k])
@@ -84,12 +88,12 @@ for k in range(N):
 
 # --- 6. 边界和路径约束 (与之前相同) ---
 opti.subject_to(r[0] == 1.0)
-opti.subject_to(v_r[0] == Vr0_norm)
-opti.subject_to(v_t[0] == Vt0_norm)
+opti.subject_to(v_y[0] == Vy0_norm)
+opti.subject_to(v_x[0] == Vx0_norm)
 opti.subject_to(m[0] == 1.0)
 opti.subject_to(r[N] == Rf_norm)
-opti.subject_to(ca.fabs(v_r[N]) <= Vr_f_norm_max)
-opti.subject_to(ca.fabs(v_t[N]) <= Vt_f_norm_max)
+opti.subject_to(ca.fabs(v_y[N]) <= Vy_f_norm_max)
+opti.subject_to(ca.fabs(v_x[N]) <= Vx_f_norm_max)
 opti.subject_to(opti.bounded(F_min_norm, f_norm, F_max_norm))
 opti.subject_to(r >= Rf_norm)
 opti.subject_to(m >= 100.0 / MU)
@@ -119,8 +123,8 @@ opti.set_initial(f_norm, f_interp)
 opti.set_initial(Theta, theta_interp)
 
 opti.set_initial(r, np.linspace(1, Rf_norm, N + 1))
-opti.set_initial(v_r, np.linspace(Vr0_norm, -Vr_f_norm_max, N + 1))
-opti.set_initial(v_t, np.linspace(Vt0_norm, Vt_f_norm_max, N + 1))
+opti.set_initial(v_y, np.linspace(Vy0_norm, -Vy_f_norm_max, N + 1))
+opti.set_initial(v_x, np.linspace(Vx0_norm, Vx_f_norm_max, N + 1))
 opti.set_initial(m, np.linspace(1, (M0_dim - 200) / MU, N + 1)) # 猜测消耗200kg燃料
 
 # --- 8. 求解器设置 ---
@@ -134,8 +138,8 @@ try:
     
     # 提取最优解
     r_opt = sol.value(r) * DU
-    vr_opt = sol.value(v_r) * VU
-    vt_opt = sol.value(v_t) * VU
+    vy_opt = sol.value(v_y) * VU
+    vx_opt = sol.value(v_x) * VU
     m_opt = sol.value(m) * MU
     f_opt = sol.value(f_norm) * FU
     Theta_opt = sol.value(Theta)
@@ -144,7 +148,7 @@ try:
     print(f"最优飞行时间: {T_final_opt:.2f} s")
     print(f"最终质量: {m_opt[-1]:.2f} kg")
     print(f"燃料消耗: {M0_dim - m_opt[-1]:.2f} kg")
-    print(f"终端速度: V_r={vr_opt[-1]:.3f} m/s, V_t={vt_opt[-1]:.3f} m/s")
+    print(f"终端速度: V_y={vy_opt[-1]:.3f} m/s, V_x={vx_opt[-1]:.3f} m/s")
     
     # 绘图
     t = np.linspace(0, T_final_opt, N + 1)
@@ -161,8 +165,8 @@ try:
     plt.grid(True)
     
     plt.subplot(2, 3, 2)
-    plt.plot(t, vr_opt, label='V（y轴速度）')
-    plt.plot(t, vt_opt, label='U（x轴速度）')
+    plt.plot(t, vy_opt, label='V（y轴速度）')
+    plt.plot(t, vx_opt, label='U（x轴速度）')
     plt.title('速度分量')
     plt.xlabel('时间 (s)')
     plt.ylabel('速度 (m/s)')
@@ -191,7 +195,7 @@ try:
     plt.grid(True)
     
     plt.subplot(2, 3, 6)
-    d_theta_rad = (vt_opt[:-1] / r_opt[:-1]) * (T_final_opt / N)
+    d_theta_rad = (vx_opt[:-1] / r_opt[:-1]) * (T_final_opt / N)
     theta_traj_rad = np.cumsum(np.concatenate(([0], d_theta_rad)))
     x_traj = r_opt * np.cos(theta_traj_rad)
     y_traj = r_opt * np.sin(theta_traj_rad)

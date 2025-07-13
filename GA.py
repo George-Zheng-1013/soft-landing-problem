@@ -11,12 +11,12 @@ def main():
 
     # 初始/终端条件 (有单位)
     R0_dim = 1753000.0
-    V_r0_dim = 0.0
-    V_t0_dim = 1692.0
+    V_y0_dim = 0.0
+    V_x0_dim = 1692.0
     M0_dim = 750.0
     Rf_dim = 1741030.0
-    Vr_f_max = 1.5
-    Vt_f_max = 3.8
+    Vy_f_max = 1.5
+    Vx_f_max = 3.8
     F_max_dim = 1750.0
 
     # 无量纲化
@@ -26,10 +26,10 @@ def main():
     VU = DU / TU
     FU = MU * DU / TU**2
     Rf_norm = Rf_dim / DU
-    Vr0_norm = V_r0_dim / VU
-    Vt0_norm = V_t0_dim / VU
-    Vr_f_norm_max = Vr_f_max / VU
-    Vt_f_norm_max = Vt_f_max / VU
+    Vy0_norm = V_y0_dim / VU
+    Vx0_norm = V_x0_dim / VU
+    Vy_f_norm_max = Vy_f_max / VU
+    Vx_f_norm_max = Vx_f_max / VU
     F_max_norm = F_max_dim / FU
     C_thrust = (TU * FU) / (MU * Isp * g_e)
 
@@ -49,22 +49,22 @@ def main():
         dt_norm = (T_final / TU) / N
         
         # 初始状态
-        r, vr, vt, m = 1.0, Vr0_norm, Vt0_norm, 1.0
+        r, vy, vx, m = 1.0, Vy0_norm, Vx0_norm, 1.0
         
         for i in range(N):
             f_n = f_controls[i]
             Theta_n = theta_controls[i]
 
             # 动力学
-            r_dot = vr
-            vr_dot = (f_n * np.cos(Theta_n)) / m - 1 / r**2 + vt**2 / r
-            vt_dot = (f_n * np.sin(Theta_n)) / m - vr * vt / r
+            r_dot = vy
+            vy_dot = (f_n * np.cos(Theta_n)) / m - 1 / r**2 + vx**2 / r
+            vx_dot = (f_n * np.sin(Theta_n)) / m - vy * vx / r
             m_dot = -C_thrust * f_n
             
             # 欧拉积分更新状态
             r += r_dot * dt_norm
-            vr += vr_dot * dt_norm
-            vt += vt_dot * dt_norm
+            vy += vy_dot * dt_norm
+            vx += vx_dot * dt_norm
             m += m_dot * dt_norm
 
         # 2.3 计算成本
@@ -79,9 +79,9 @@ def main():
         cost += W_pos * pos_error**2
         
         # 速度误差惩罚
-        vel_r_error = max(0, abs(vr) - Vr_f_norm_max)
-        vel_t_error = max(0, abs(vt) - Vt_f_norm_max)
-        cost += W_vel * (vel_r_error**2 + vel_t_error**2)
+        vel_y_error = max(0, abs(vy) - Vy_f_norm_max)
+        vel_x_error = max(0, abs(vx) - Vx_f_norm_max)
+        cost += W_vel * (vel_y_error**2 + vel_x_error**2)
         
         return cost
 
