@@ -2,7 +2,6 @@ import numpy as np
 import casadi as ca
 import matplotlib.pyplot as plt
 
-# --- 1. 设置中文字体 ---
 plt.rcParams['font.sans-serif'] = ['SimHei', 'Microsoft YaHei', 'Arial Unicode MS', 'DejaVu Sans']
 plt.rcParams['axes.unicode_minus'] = False
 
@@ -11,7 +10,7 @@ mu = 4.903e12  # 月球引力常数 (m^3/s^2)
 Isp = 316.0      # 发动机比冲 (s)
 g_e = 9.81     # 地球海平面重力加速度 (m/s^2)
 
-# 初始状态 (SI 单位) - 简化为二维
+# 初始状态 (SI 单位)
 R0_dim = 1753000.0   # m (初始轨道半径)
 V_r0_dim = 0.0       # m/s (径向速度)
 V_t0_dim = 1692.0    # m/s (切向速度)
@@ -41,8 +40,8 @@ F_max_norm = F_max_dim / FU
 F_min_norm = F_min_dim / FU
 C_thrust = (TU * FU) / (MU * Isp * g_e)
 
-# --- 4. 优化问题构建 (CasADi) ---
-N = 400  # 使用更多的离散点以获得更精确的解
+# --- 4. 优化问题构建 ---
+N = 400
 opti = ca.Opti()
 
 # 定义状态变量 X_norm (无量纲)
@@ -97,9 +96,6 @@ opti.subject_to(m >= 100.0 / MU)
 opti.subject_to(opti.bounded(500, T_final, 800))
 opti.subject_to(opti.bounded(-np.pi, Theta, 0))
 
-# --- 7. 设置初始猜测值 (使用遗传算法的结果) ---
-print("\n--- 使用遗传算法找到的解作为初始猜测值 ---")
-
 # 遗传算法找到的最优解 (N=50)
 T_final_guess = 790.2278
 f_guess_ga = np.array([0.6702,1.0898,0.918 ,1.056 ,0.8027,1.1581,0.7835,0.7112,0.9954,1.0826,
@@ -114,17 +110,14 @@ theta_guess_ga = np.array([-1.7701,-1.6486,-1.2898,-1.3523,-1.0958,-1.5215,-1.23
  -0.848 ,-0.955 ,-1.0875,-1.1208,-0.915 ,-1.0213,-0.9279,-0.8395,-1.0503,
  -0.6862,-0.9348,-1.0166,-1.1408,-1.3125])
 
-# 将GA的结果插值到当前模型的N个点
 N_ga = 50
 f_interp = np.interp(np.linspace(0, 1, N), np.linspace(0, 1, N_ga), f_guess_ga)
 theta_interp = np.interp(np.linspace(0, 1, N), np.linspace(0, 1, N_ga), theta_guess_ga)
 
-# 设置初始值
 opti.set_initial(T_final, T_final_guess)
 opti.set_initial(f_norm, f_interp)
 opti.set_initial(Theta, theta_interp)
 
-# 对于状态变量，我们仍然可以使用线性猜测，因为控制变量的猜测已经足够好
 opti.set_initial(r, np.linspace(1, Rf_norm, N + 1))
 opti.set_initial(v_r, np.linspace(Vr0_norm, -Vr_f_norm_max, N + 1))
 opti.set_initial(v_t, np.linspace(Vt0_norm, Vt_f_norm_max, N + 1))
