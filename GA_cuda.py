@@ -247,6 +247,7 @@ if __name__ == "__main__":
     start_time = time.time()
     
     # 创建优化器
+    optimizer = DifferentialEvolution(bounds, popsize=50, F=0.5, CR=0.9, maxiter=500)
     # 运行优化
     best_solution, best_fitness = optimizer.optimize()
     

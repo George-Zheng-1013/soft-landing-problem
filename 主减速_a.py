@@ -6,7 +6,7 @@ import matplotlib.pyplot as plt
 plt.rcParams['font.sans-serif'] = ['SimHei', 'Microsoft YaHei', 'Arial Unicode MS', 'DejaVu Sans']
 plt.rcParams['axes.unicode_minus'] = False
 
-# --- 2. 定义物理常量和初始/终端条件 (参考论文 A10009072) ---
+# --- 2. 定义物理常量和初始/终端条件 ---
 # 物理常量
 G_const = 6.67430e-11  # 万有引力常数 (m^3/kg/s^2)
 M_moon = 7.3477e22     # 月球质量 (kg)
@@ -24,10 +24,12 @@ m0_dim = 2400.0        # 初始质量 (kg)
 # 终端状态 (SI 单位)
 rf_dim = 2400.0+R_moon_dim
 vtf_dim = 0.0          # 切向速度要求为0
-vrf_dim = -5.0          # 径向速度要求为0
+vrf_dim = -5.0         # 径向速度要求
 
-# 推力约束 (SI 单位)
+# 【修改】推力加速度约束 (恒定加速度)
+a_constant = 3.125     # 恒定加速度 (m/s²)
 F_max_dim = 7500.0     # N
+F_min_dim = 0.0       # N
 
 # --- 3. 优化问题构建 (CasADi) ---
 N = 400  # 离散点数
@@ -40,13 +42,13 @@ v_r  = X[1, :]  # 径向速度 (m/s)
 v_t  = X[2, :]  # 切向速度 (m/s)
 m    = X[3, :]  # 质量 (kg)
 
-# 【修改】控制变量只剩下推力角 psi
-psi = opti.variable(1, N)  # 推力角, 相对于切向 (rad)
+# 控制变量：推力角 psi (相对于径向)
+psi = opti.variable(1, N)  # 推力角 β (rad)
 
 # 定义总时间 T_final (s)
 T_final = opti.variable()
 
-# 目标函数：最大化最终质量 (等价于最小化飞行时间)
+# 目标函数：最大化最终质量
 opti.minimize(-m[N])
 
 # --- 4. 动力学约束 ---
@@ -54,19 +56,22 @@ dt = T_final / N
 
 def dynamics(x_state, psi_k):
     """
-    基于论文的动力学模型, 但推力F是常数
+    基于给定方程组的动力学模型
     x_state: [r, v_r, v_t, m]
-    psi_k: 推力角控制
+    psi_k: 推力角 psi (相对于切向)
     """
     r_k, vr_k, vt_k, m_k = x_state[0], x_state[1], x_state[2], x_state[3]
     
-    # 【修改】推力F固定为最大值
-    F_k = F_max_dim
+    # 推力根据恒定加速度和质量计算
+    F_k = a_constant * m_k
     
-    # 动力学方程
+    # 修正后的动力学方程
     r_dot   = vr_k
-    vr_dot  = (vt_k**2 / r_k) - (mu_moon / r_k**2) + (F_k / m_k) * ca.sin(psi_k)
-    vt_dot  = -(vr_k * vt_k / r_k) - (F_k / m_k) * ca.cos(psi_k)
+    # 径向加速度：离心力 - 引力 + 推力径向分量
+    vr_dot  = (vt_k**2 / r_k) - (mu_moon / r_k**2) + a_constant * ca.sin(psi_k)
+    # 【关键修正】切向加速度：科里奥利力 - 推力切向分量 (负号表示制动)
+    vt_dot  = -(vr_k * vt_k / r_k) - a_constant * ca.cos(psi_k)
+    # 质量变化率
     m_dot   = -F_k / v_e
     
     return ca.vertcat(r_dot, vr_dot, vt_dot, m_dot)
@@ -90,29 +95,51 @@ opti.subject_to(m[0] == m0_dim)
 # 终端条件
 opti.subject_to(r[N] == rf_dim)
 opti.subject_to(v_t[N] == vtf_dim)
-opti.subject_to(v_r[N] <= vrf_dim)
+opti.subject_to(v_r[N] >= vrf_dim)
 
 # 路径约束
-opti.subject_to(r >= rf_dim)
-opti.subject_to(m >= 500.0)
+opti.subject_to(r >= rf_dim)  # 不能低于终端高度
+opti.subject_to(m >= 500.0)   # 最小质量约束
+opti.subject_to(opti.bounded(F_min_dim, a_constant * m[:-1], F_max_dim))  # 推力约束
 
-# 控制变量约束
-opti.subject_to(opti.bounded(-np.pi/2, psi, np.pi*0.5))
+# 控制变量约束 (推力角范围)
+opti.subject_to(opti.bounded(-np.pi/2, psi, np.pi/2))
 
 # 时间约束
 opti.subject_to(opti.bounded(300, T_final, 1200))
 
 # --- 6. 设置初始猜测值 ---
-opti.set_initial(T_final, 400) # 最大推力下，时间会更短
-# 猜测角度从纯制动(0)线性过渡到纯垂直(pi/2)
-opti.set_initial(psi, np.linspace(0, np.pi/2, N))
+# 【修改】使用PyTorch遗传算法的结果作为初始猜测
+opti.set_initial(T_final, 561.7607)  # 来自遗传算法
+
+# 遗传算法的推力角序列
+psi_guess_ga = np.array([-0.5785,-0.4218, 1.5708,-0.0074, 0.1148,-0.0395, 0.3908,-0.8467,-1.0239,
+  1.0437,-1.5708, 0.582 ,-0.6583, 0.695 , 0.9967,-0.2274, 0.8388, 0.7788,
+ -1.113 ,-1.5708, 0.6258, 0.5174,-1.1382, 1.5708, 0.3912,-0.5727, 0.7654,
+ -1.2772, 0.9503,-0.889 , 0.8395, 1.052 ,-0.0177,-0.033 ,-0.5758, 0.8572,
+  0.4938, 0.4952, 0.4029,-0.9179,-1.3735, 1.5708,-0.3655,-1.1172,-0.625 ,
+  0.7275,-1.2517, 1.3655, 0.5026, 0.4018, 0.552 , 0.8926, 0.7494,-0.8624,
+  0.5131, 1.5708, 0.8632, 0.3498, 0.2223, 0.7062,-0.624 , 0.1267, 0.8234,
+ -0.4447, 1.1712, 1.2246, 1.404 , 1.5708,-0.8837, 0.0556,-0.3099, 0.6952,
+  1.3092,-1.1497, 1.5708, 0.8299, 0.4313, 0.2896, 0.7099, 1.153 ,-0.663 ,
+  1.3675,-0.867 ,-0.7515, 1.2845, 1.5708, 1.0371,-0.1502, 0.2903, 1.0941,
+ -0.5267, 0.0034, 0.6634, 0.1849,-1.5433, 0.6604,-1.4307, 0.5314, 1.0802,
+  0.1003])
+
+# 插值到CasADi的网格点数
+N_ga = 100  # 遗传算法使用的点数
+N_casadi = 400  # CasADi使用的点数
+psi_interp = np.interp(np.linspace(0, 1, N_casadi), np.linspace(0, 1, N_ga), psi_guess_ga)
+opti.set_initial(psi, psi_interp)
+
+# 基于遗传算法结果的状态变量初始猜测
 opti.set_initial(r, np.linspace(r0_dim, rf_dim, N + 1))
-opti.set_initial(v_r, np.linspace(vr0_dim, -50, N + 1)) # 猜测撞击速度会更大
+opti.set_initial(v_r, np.linspace(vr0_dim, -10, N + 1))  # 更小的终端速度
 opti.set_initial(v_t, np.linspace(vt0_dim, vtf_dim, N + 1))
-opti.set_initial(m, np.linspace(m0_dim, m0_dim - 1000, N + 1)) # 猜测消耗更多燃料
+opti.set_initial(m, np.linspace(m0_dim, m0_dim - 800, N + 1))  # 基于遗传算法的燃料消耗
 
 # --- 7. 求解器设置 ---
-s_opts = {"max_iter": 500, "print_level": 5}
+s_opts = {"max_iter": 1000, "print_level": 5, "tol": 1e-6}  # 增加迭代次数
 opti.solver('ipopt', {}, s_opts)
 
 # --- 8. 求解并后处理 ---
@@ -128,21 +155,27 @@ try:
     psi_opt = sol.value(psi)
     T_final_opt = sol.value(T_final)
     
+    # 计算推力历史
+    F_opt = a_constant * m_opt[:-1]  # 推力 = 恒定加速度 × 质量
+    
     print(f"最优飞行时间: {T_final_opt:.2f} s")
     print(f"最终质量: {m_opt[-1]:.2f} kg")
     print(f"燃料消耗: {m0_dim - m_opt[-1]:.2f} kg")
-    print(f"终端径向速度 (撞击速度): {vr_opt[-1]:.3f} m/s")
+    print(f"终端径向速度: {vr_opt[-1]:.3f} m/s")
     print(f"终端切向速度: {vt_opt[-1]:.3f} m/s")
+    print(f"恒定加速度: {a_constant:.3f} m/s²")
+    print(f"初始推力: {F_opt[0]:.2f} N")
+    print(f"最终推力: {F_opt[-1]:.2f} N")
     
     # 绘图
     t_axis = np.linspace(0, T_final_opt, N + 1)
     t_ctrl_axis = np.linspace(0, T_final_opt, N)
     
-    plt.figure(figsize=(12, 8))
-    plt.suptitle(f'全程最大推力轨迹优化 (飞行时间: {T_final_opt:.1f}s)', fontsize=16)
+    plt.figure(figsize=(15, 10))
+    plt.suptitle(f'恒定加速度轨迹优化 (a = {a_constant} m/s², 飞行时间: {T_final_opt:.1f}s)', fontsize=16)
     
     # 高度变化
-    plt.subplot(2, 3, 1)
+    plt.subplot(2, 4, 1)
     plt.plot(t_axis, (r_opt - R_moon_dim)/1000)
     plt.title('高度变化')
     plt.xlabel('时间 (s)')
@@ -150,7 +183,7 @@ try:
     plt.grid(True)
     
     # 速度分量
-    plt.subplot(2, 3, 2)
+    plt.subplot(2, 4, 2)
     plt.plot(t_axis, vr_opt, label='径向速度 (v_r)')
     plt.plot(t_axis, vt_opt, label='切向速度 (v_t)')
     plt.title('速度分量')
@@ -160,32 +193,43 @@ try:
     plt.grid(True)
     
     # 质量变化
-    plt.subplot(2, 3, 3)
+    plt.subplot(2, 4, 3)
     plt.plot(t_axis, m_opt)
     plt.title('质量变化')
     plt.xlabel('时间 (s)')
     plt.ylabel('质量 (kg)')
     plt.grid(True)
     
-    # 推力变化
-    plt.subplot(2, 3, 4)
-    plt.plot(t_ctrl_axis, np.full_like(t_ctrl_axis, F_max_dim), 'r')
-    plt.title('推力变化 (恒定最大)')
+    # 推力变化 (动态)
+    plt.subplot(2, 4, 4)
+    plt.plot(t_ctrl_axis, F_opt, 'r')
+    plt.title('推力变化 (动态)')
     plt.xlabel('时间 (s)')
     plt.ylabel('推力 (N)')
-    plt.ylim(0, F_max_dim * 1.1)
     plt.grid(True)
     
     # 推力角度变化
-    plt.subplot(2, 3, 5)
+    plt.subplot(2, 4, 5)
     plt.plot(t_ctrl_axis, np.degrees(psi_opt))
-    plt.title('推力角 ψ (相对切向)')
+    plt.title('推力角 β (相对径向)')
     plt.xlabel('时间 (s)')
     plt.ylabel('角度 (°)')
     plt.grid(True)
     
+    # 加速度分量
+    plt.subplot(2, 4, 6)
+    a_r = a_constant * np.sin(psi_opt)
+    a_t = a_constant * np.cos(psi_opt)
+    plt.plot(t_ctrl_axis, a_r, label='径向加速度')
+    plt.plot(t_ctrl_axis, a_t, label='切向加速度')
+    plt.title('加速度分量')
+    plt.xlabel('时间 (s)')
+    plt.ylabel('加速度 (m/s²)')
+    plt.legend()
+    plt.grid(True)
+    
     # 轨迹投影
-    plt.subplot(2, 3, 6)
+    plt.subplot(2, 4, 7)
     d_theta_rad = (vt_opt[:-1] / r_opt[:-1]) * (T_final_opt / N)
     theta_traj_rad = np.cumsum(np.concatenate(([0], d_theta_rad)))
     x_traj = r_opt * np.cos(theta_traj_rad)
@@ -197,6 +241,17 @@ try:
     plt.xlabel('X (km)')
     plt.ylabel('Y (km)')
     plt.axis('equal')
+    plt.legend()
+    plt.grid(True)
+    
+    # 速度方向角 (tan β = v_y/v_x)
+    plt.subplot(2, 4, 8)
+    beta_velocity = np.arctan(vr_opt[:-1] / vt_opt[:-1])
+    plt.plot(t_ctrl_axis, np.degrees(beta_velocity), label='速度方向角')
+    plt.plot(t_ctrl_axis, np.degrees(psi_opt), label='推力角')
+    plt.title('角度对比')
+    plt.xlabel('时间 (s)')
+    plt.ylabel('角度 (°)')
     plt.legend()
     plt.grid(True)
     
