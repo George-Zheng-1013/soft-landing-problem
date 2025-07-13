@@ -22,7 +22,7 @@ vt0_dim = 1692.46      # 初始切向速度 (m/s)
 m0_dim = 2400.0        # 初始质量 (kg)
 
 # 终端状态 (SI 单位)
-rf_dim = R_moon_dim    # 最终轨道半径 (月面)
+rf_dim = 2400.0+R_moon_dim
 vtf_dim = 0.0          # 切向速度要求为0
 
 # 推力约束 (SI 单位)
@@ -87,7 +87,7 @@ opti.subject_to(v_t[0] == vt0_dim)
 opti.subject_to(m[0] == m0_dim)
 
 # 终端条件
-opti.subject_to(r[N] >= rf_dim)
+opti.subject_to(r[N] == rf_dim)
 opti.subject_to(v_t[N] == vtf_dim)
 
 # 路径约束
@@ -95,20 +95,19 @@ opti.subject_to(r >= rf_dim)
 opti.subject_to(m >= 500.0)
 
 # 控制变量约束
-opti.subject_to(opti.bounded(0, psi, np.pi*0.5))
+opti.subject_to(opti.bounded(-np.pi/2, psi, np.pi*0.5))
 
 # 时间约束
-opti.subject_to(opti.bounded(400, T_final, 800))
+opti.subject_to(opti.bounded(300, T_final, 1200))
 
 # --- 6. 设置初始猜测值 ---
-opti.set_initial(T_final, 500) # 最大推力下，时间会更短
+opti.set_initial(T_final, 400) # 最大推力下，时间会更短
 # 猜测角度从纯制动(0)线性过渡到纯垂直(pi/2)
 opti.set_initial(psi, np.linspace(0, np.pi/2, N))
-
 opti.set_initial(r, np.linspace(r0_dim, rf_dim, N + 1))
-opti.set_initial(v_r, np.linspace(vr0_dim, -100, N + 1)) # 猜测撞击速度会更大
+opti.set_initial(v_r, np.linspace(vr0_dim, -50, N + 1)) # 猜测撞击速度会更大
 opti.set_initial(v_t, np.linspace(vt0_dim, vtf_dim, N + 1))
-opti.set_initial(m, np.linspace(m0_dim, m0_dim - 1300, N + 1)) # 猜测消耗更多燃料
+opti.set_initial(m, np.linspace(m0_dim, m0_dim - 1000, N + 1)) # 猜测消耗更多燃料
 
 # --- 7. 求解器设置 ---
 s_opts = {"max_iter": 500, "print_level": 5}
