@@ -71,24 +71,20 @@ def dynamics(x_state, F_k, psi_k):
 dt1 = T1 / N1
 for k in range(N1):
     k1 = dynamics(X1[:, k], F_max_dim, psi1[k])
-    k2 = dynamics(X1[:, k] + dt1 / 4 * k1, F_max_dim, psi1[k])
-    k3 = dynamics(X1[:, k] + dt1 / 8 * k1 + dt1 / 8 * k2, F_max_dim, psi1[k])
-    k4 = dynamics(X1[:, k] + dt1 / 2 * k3, F_max_dim, psi1[k])
-    k5 = dynamics(X1[:, k] + dt1 / 16 * (3 * k1 - 9 * k2 + 12 * k3 - 4 * k4), F_max_dim, psi1[k])
-    k6 = dynamics(X1[:, k] + dt1 / 7 * (k1 + 4 * k2 + 6 * k3 - 12 * k4 + 8 * k5), F_max_dim, psi1[k])
-    x_next = X1[:, k] + dt1 / 90 * (7 * k1 + 32 * k3 + 12 * k4 + 32 * k5 + 7 * k6)
+    k2 = dynamics(X1[:, k] + dt1 / 2 * k1, F_max_dim, psi1[k])
+    k3 = dynamics(X1[:, k] + dt1 / 2 * k2, F_max_dim, psi1[k])
+    k4 = dynamics(X1[:, k] + dt1 * k3, F_max_dim, psi1[k])
+    x_next = X1[:, k] + dt1 / 6 * (k1 + 2 * k2 + 2 * k3 + k4)
     opti.subject_to(X1[:, k+1] == x_next)
 
 # 阶段二：动力学约束 (推力可变)
 dt2 = T2 / N2
 for k in range(N2):
     k1 = dynamics(X2[:, k], F2[k], psi2[k])
-    k2 = dynamics(X2[:, k] + dt2 / 4 * k1, F2[k], psi2[k])
-    k3 = dynamics(X2[:, k] + dt2 / 8 * k1 + dt2 / 8 * k2, F2[k], psi2[k])
-    k4 = dynamics(X2[:, k] + dt2 / 2 * k3, F2[k], psi2[k])
-    k5 = dynamics(X2[:, k] + dt2 / 16 * (3 * k1 - 9 * k2 + 12 * k3 - 4 * k4), F2[k], psi2[k])
-    k6 = dynamics(X2[:, k] + dt2 / 7 * (k1 + 4 * k2 + 6 * k3 - 12 * k4 + 8 * k5), F2[k], psi2[k])
-    x_next = X2[:, k] + dt2 / 90 * (7 * k1 + 32 * k3 + 12 * k4 + 32 * k5 + 7 * k6)
+    k2 = dynamics(X2[:, k] + dt2 / 2 * k1, F2[k], psi2[k])
+    k3 = dynamics(X2[:, k] + dt2 / 2 * k2, F2[k], psi2[k])
+    k4 = dynamics(X2[:, k] + dt2 * k3, F2[k], psi2[k])
+    x_next = X2[:, k] + dt2 / 6 * (k1 + 2 * k2 + 2 * k3 + k4)
     opti.subject_to(X2[:, k+1] == x_next)
 
 # 边界条件：初始和最终
@@ -96,7 +92,7 @@ opti.subject_to(r1[0] == r0_dim)
 opti.subject_to(vr1[0] == vr0_dim)
 opti.subject_to(vt1[0] == vt0_dim)
 opti.subject_to(m1[0] == m0_dim)
-opti.subject_to(r1[N1] == R_moon_dim + 3000)  # 阶段一结束时高度
+opti.subject_to(r1[N1] == R_moon_dim + 30)  # 阶段一结束时高度
 
 opti.subject_to(r2[N2] == R_moon_dim+4) # 最终高度为月面
 opti.subject_to(vr2[N2] == 0)         # 最终垂直速度为0 (软着陆)
@@ -109,7 +105,9 @@ opti.subject_to(X1[:, N1] == X2[:, 0])
 # 路径和控制变量的约束
 opti.subject_to(opti.bounded(0, psi1, np.pi)) # 阶段一推力角
 opti.subject_to(opti.bounded(0, F2, F_max_dim)) # 阶段二推力大小，允许为0
-opti.subject_to(psi2 == np.pi/2) # 阶段二推力角固定为竖直向下
+#opti.subject_to(psi2 == np.pi/2) # 阶段二推力角固定为竖直向下
+angle_range = 15 * np.pi / 180 
+opti.subject_to(opti.bounded(np.pi/2 - angle_range, psi2, np.pi/2 + angle_range))
 opti.subject_to(r1 >= R_moon_dim) # 路径高度约束
 opti.subject_to(r2 >= R_moon_dim) # 路径高度约束
 opti.subject_to(m2[N2] >= 500) # 保证最小干重
