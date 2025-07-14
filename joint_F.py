@@ -1,6 +1,7 @@
 import numpy as np
 import casadi as ca
 import matplotlib.pyplot as plt
+import pandas as pd
 
 # --- 1. 设置中文字体 ---
 plt.rcParams['font.sans-serif'] = ['SimHei', 'Microsoft YaHei', 'Arial Unicode MS', 'DejaVu Sans']
@@ -42,9 +43,8 @@ T1 = opti.variable()
 # 状态变量 [r, v_r, v_t, m]
 X2 = opti.variable(4, N2 + 1)
 r2, vr2, vt2, m2 = X2[0, :], X2[1, :], X2[2, :], X2[3, :]
-# 控制变量：推力大小 F 和推力角 psi
+# 控制变量：推力大小 F
 F2 = opti.variable(1, N2)
-psi2 = opti.variable(1, N2)
 # 阶段时长
 T2 = opti.variable()
 
@@ -79,15 +79,15 @@ for k in range(N1):
     x_next = X1[:, k] + dt1 / 90 * (7 * k1 + 32 * k3 + 12 * k4 + 32 * k5 + 7 * k6)
     opti.subject_to(X1[:, k+1] == x_next)
 
-# 阶段二：动力学约束 (推力可变)
+# 阶段二：动力学约束 (推力可变，推力角固定为竖直向下)
 dt2 = T2 / N2
 for k in range(N2):
-    k1 = dynamics(X2[:, k], F2[k], psi2[k])
-    k2 = dynamics(X2[:, k] + dt2 / 4 * k1, F2[k], psi2[k])
-    k3 = dynamics(X2[:, k] + dt2 / 8 * k1 + dt2 / 8 * k2, F2[k], psi2[k])
-    k4 = dynamics(X2[:, k] + dt2 / 2 * k3, F2[k], psi2[k])
-    k5 = dynamics(X2[:, k] + dt2 / 16 * (3 * k1 - 9 * k2 + 12 * k3 - 4 * k4), F2[k], psi2[k])
-    k6 = dynamics(X2[:, k] + dt2 / 7 * (k1 + 4 * k2 + 6 * k3 - 12 * k4 + 8 * k5), F2[k], psi2[k])
+    k1 = dynamics(X2[:, k], F2[k], np.pi/2)
+    k2 = dynamics(X2[:, k] + dt2 / 4 * k1, F2[k], np.pi/2)
+    k3 = dynamics(X2[:, k] + dt2 / 8 * k1 + dt2 / 8 * k2, F2[k], np.pi/2)
+    k4 = dynamics(X2[:, k] + dt2 / 2 * k3, F2[k], np.pi/2)
+    k5 = dynamics(X2[:, k] + dt2 / 16 * (3 * k1 - 9 * k2 + 12 * k3 - 4 * k4), F2[k], np.pi/2)
+    k6 = dynamics(X2[:, k] + dt2 / 7 * (k1 + 4 * k2 + 6 * k3 - 12 * k4 + 8 * k5), F2[k], np.pi/2)
     x_next = X2[:, k] + dt2 / 90 * (7 * k1 + 32 * k3 + 12 * k4 + 32 * k5 + 7 * k6)
     opti.subject_to(X2[:, k+1] == x_next)
 
@@ -109,7 +109,6 @@ opti.subject_to(X1[:, N1] == X2[:, 0])
 # 路径和控制变量的约束
 opti.subject_to(opti.bounded(0, psi1, np.pi)) # 阶段一推力角
 opti.subject_to(opti.bounded(0, F2, F_max_dim)) # 阶段二推力大小，允许为0
-opti.subject_to(psi2 == np.pi/2) # 阶段二推力角固定为竖直向下
 opti.subject_to(r1 >= R_moon_dim) # 路径高度约束
 opti.subject_to(r2 >= R_moon_dim) # 路径高度约束
 opti.subject_to(m2[N2] >= 500) # 保证最小干重
@@ -130,11 +129,10 @@ opti.set_initial(m1, np.linspace(m0_dim, m0_dim - 1100, N1 + 1))
 
 # 阶段二猜测 (起点必须与阶段一终点猜测一致)
 opti.set_initial(T2, 100)
-opti.set_initial(F2, F_max_dim * 0.8)
-opti.set_initial(psi2, np.pi/2)
+opti.set_initial(F2, np.concatenate([np.zeros(N2//2), np.full(N2//2, F_max_dim)]))
 opti.set_initial(r2, np.linspace(R_moon_dim + 2000, R_moon_dim, N2 + 1))
 opti.set_initial(vr2, np.linspace(-80, 0, N2 + 1))
-opti.set_initial(vt2, np.linspace(100, 0, N2 + 1))
+opti.set_initial(vt2, 0)
 opti.set_initial(m2, np.linspace(m0_dim - 1100, m0_dim - 1300, N2 + 1))
 
 # --- 7. 求解 ---
@@ -164,6 +162,104 @@ try:
     print("\n--- 全局最优结果 ---")
     print(f"总燃料消耗: {total_fuel_consumed:.2f} kg")
     print(f"总飞行时间: {sol.value(T1) + sol.value(T2):.2f} s")
+    
+    # --- 准备绘图数据 ---
+    t1_opt = np.linspace(0, sol.value(T1), N1 + 1)
+    t2_opt = np.linspace(sol.value(T1), sol.value(T1) + sol.value(T2), N2 + 1)
+    t_axis = np.concatenate((t1_opt, t2_opt[1:]))
+    
+    r_opt = np.concatenate((sol.value(r1), sol.value(r2)[1:]))
+    vr_opt = np.concatenate((sol.value(vr1), sol.value(vr2)[1:]))
+    vt_opt = np.concatenate((sol.value(vt1), sol.value(vt2)[1:]))
+    m_opt = np.concatenate((sol.value(m1), sol.value(m2)[1:]))
+    
+    # 计算推力数据
+    thrust_time = np.concatenate((
+        np.linspace(0, sol.value(T1), N1),
+        np.linspace(sol.value(T1), sol.value(T1) + sol.value(T2), N2)
+    ))
+    thrust_magnitude = np.concatenate((
+        np.full(N1, F_max_dim),
+        sol.value(F2)
+    ))
+    
+    # 计算推力角数据
+    angle_time = np.concatenate((
+        np.linspace(0, sol.value(T1), N1),
+        np.linspace(sol.value(T1), sol.value(T1) + sol.value(T2), N2)
+    ))
+    angle_degrees = np.concatenate((
+        np.degrees(sol.value(psi1)),
+        np.full(N2, 90)
+    ))
+    
+    # 计算轨迹投影数据
+    dt_traj = np.diff(t_axis)
+    d_theta_rad = (vt_opt[:-1] / r_opt[:-1]) * dt_traj
+    theta_traj_rad = np.cumsum(np.concatenate(([0], d_theta_rad)))
+    x_traj = r_opt * np.cos(theta_traj_rad)
+    y_traj = r_opt * np.sin(theta_traj_rad)
+    
+    # --- 导出数据到Excel ---
+    print("\n--- 导出数据到Excel文件 ---")
+    
+    # 创建包含所有数据的字典
+    max_len = max(len(t_axis), len(thrust_time), len(angle_time))
+    
+    # 状态数据 (时间序列)
+    state_data = {
+        '时间_s': np.pad(t_axis, (0, max_len - len(t_axis)), constant_values=np.nan),
+        '高度_m': np.pad((r_opt - R_moon_dim), (0, max_len - len(r_opt)), constant_values=np.nan),
+        '径向速度_ms': np.pad(vr_opt, (0, max_len - len(vr_opt)), constant_values=np.nan),
+        '切向速度_ms': np.pad(vt_opt, (0, max_len - len(vt_opt)), constant_values=np.nan),
+        '质量_kg': np.pad(m_opt, (0, max_len - len(m_opt)), constant_values=np.nan),
+        '轨迹X坐标_m': np.pad(x_traj, (0, max_len - len(x_traj)), constant_values=np.nan),
+        '轨迹Y坐标_m': np.pad(y_traj, (0, max_len - len(y_traj)), constant_values=np.nan)
+    }
+    
+    # 控制数据 (推力和角度)
+    control_data = {
+        '控制时间_s': np.pad(thrust_time, (0, max_len - len(thrust_time)), constant_values=np.nan),
+        '推力大小_N': np.pad(thrust_magnitude, (0, max_len - len(thrust_magnitude)), constant_values=np.nan),
+        '推力角度_deg': np.pad(angle_degrees, (0, max_len - len(angle_degrees)), constant_values=np.nan)
+    }
+    
+    # 合并数据
+    all_data = {**state_data, **control_data}
+    
+    # 创建DataFrame
+    df = pd.DataFrame(all_data)
+    
+    # 导出到Excel文件
+    output_filename = "lunar_landing_optimization_data.xlsx"
+    with pd.ExcelWriter(output_filename, engine='openpyxl') as writer:
+        # 主数据表
+        df.to_excel(writer, sheet_name='轨迹数据', index=False)
+        
+        # 关键参数表
+        summary_data = {
+            '参数': ['总燃料消耗_kg', '总飞行时间_s', '转折点高度_m', '转折点径向速度_ms', 
+                    '转折点切向速度_ms', '转折点质量_kg', '阶段一时长_s', '阶段二时长_s'],
+            '数值': [total_fuel_consumed, sol.value(T1) + sol.value(T2), h_turn, vr_turn, 
+                    vt_turn, m_turn, sol.value(T1), sol.value(T2)]
+        }
+        summary_df = pd.DataFrame(summary_data)
+        summary_df.to_excel(writer, sheet_name='关键参数', index=False)
+        
+        # 转折点信息表
+        transition_data = {
+            '阶段': ['阶段一终点', '阶段二起点'],
+            '高度_m': [h_turn, h_turn],
+            '径向速度_ms': [vr_turn, vr_turn],
+            '切向速度_ms': [vt_turn, vt_turn],
+            '质量_kg': [m_turn, m_turn],
+            '时间_s': [sol.value(T1), sol.value(T1)]
+        }
+        transition_df = pd.DataFrame(transition_data)
+        transition_df.to_excel(writer, sheet_name='转折点信息', index=False)
+    
+    print(f"数据已成功导出到: {output_filename}")
+    print(f"包含工作表: 轨迹数据, 关键参数, 转折点信息")
     
     # --- 绘图 ---
     t1_opt = np.linspace(0, sol.value(T1), N1 + 1)
@@ -201,7 +297,7 @@ try:
 
     plt.subplot(2, 3, 5)
     plt.plot(np.linspace(0, sol.value(T1), N1), np.degrees(sol.value(psi1)), label='阶段一')
-    plt.plot(np.linspace(sol.value(T1), sol.value(T1)+sol.value(T2), N2), np.degrees(sol.value(psi2)), label='阶段二')
+    plt.plot(np.linspace(sol.value(T1), sol.value(T1)+sol.value(T2), N2), np.full(N2, 90), label='阶段二 (固定90°)')
     plt.title('推力角 ψ (相对切向)'), plt.xlabel('时间 (s)'), plt.ylabel('角度 (°)'), plt.grid(True), plt.legend()
 
     plt.subplot(2, 3, 6)
