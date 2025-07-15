@@ -43,7 +43,7 @@ parameter_sets = [
             "F_max_dim": 7500.0,
             "F_min_dim": 1500.0,
             "H0_dim": 15000.0,
-            "vt0_dim": 1700.0 # 对应较高轨道的较低速度
+            "vt0_dim": 1700.0
         }
     }
 ]

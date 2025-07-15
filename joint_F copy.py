@@ -70,15 +70,13 @@ def dynamics(x_state, F_k, psi_k):
 # 阶段一：动力学约束 (推力固定为最大值)
 dt1 = T1 / N1
 for k in range(N1):
-    x_dot = dynamics(X1[:, k], F_max_dim, psi1[k])
-    x_next = X1[:, k] + dt1 * x_dot
+    x_next = X1[:, k] + dt1 * dynamics(X1[:, k], F_max_dim, psi1[k])
     opti.subject_to(X1[:, k+1] == x_next)
 
 # 阶段二：动力学约束 (推力可变，推力角固定为竖直向下)
 dt2 = T2 / N2
 for k in range(N2):
-    x_dot = dynamics(X2[:, k], F2[k], np.pi/2)
-    x_next = X2[:, k] + dt2 * x_dot
+    x_next = X2[:, k] + dt2 * dynamics(X2[:, k], F2[k], np.pi/2)
     opti.subject_to(X2[:, k+1] == x_next)
 
 # 边界条件：初始和最终
@@ -102,10 +100,12 @@ opti.subject_to(opti.bounded(0, F2, F_max_dim)) # 阶段二推力大小，允许
 opti.subject_to(r1 >= R_moon_dim) # 路径高度约束
 opti.subject_to(r2 >= R_moon_dim) # 路径高度约束
 opti.subject_to(m2[N2] >= 500) # 保证最小干重
+for k in range(N1):
+    opti.subject_to(r1[k+1]<=r1[k]+5)
 
 # 时间约束
-# opti.subject_to(opti.bounded(300, T1, 2000))
-# opti.subject_to(opti.bounded(50, T2, 500))
+# opti.subject_to(opti.bounded(300, T1, 1000))
+# opti.subject_to(opti.bounded(50, T2, 200))
 
 # --- 6. 设置初始猜测值 ---
 # 为整个复杂问题提供一个合理的初始猜测是至关重要的
