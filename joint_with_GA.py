@@ -55,24 +55,18 @@ def dynamics(x_state, F_k, psi_k):
     return ca.vertcat(r_dot, vr_dot, vt_dot, m_dot)
 
 # --- 5. 施加约束 ---
-# 阶段一：动力学约束
+# 阶段一：动力学约束（欧拉法）
 dt1 = T1 / N1
 for k in range(N1):
-    k1 = dynamics(X1[:, k], F_max_dim, psi1[k])
-    k2 = dynamics(X1[:, k] + dt1 / 2 * k1, F_max_dim, psi1[k])
-    k3 = dynamics(X1[:, k] + dt1 / 2 * k2, F_max_dim, psi1[k])
-    k4 = dynamics(X1[:, k] + dt1 * k3, F_max_dim, psi1[k])
-    x_next = X1[:, k] + dt1 / 6 * (k1 + 2 * k2 + 2 * k3 + k4)
+    x_dot = dynamics(X1[:, k], F_max_dim, psi1[k])
+    x_next = X1[:, k] + dt1 * x_dot
     opti.subject_to(X1[:, k+1] == x_next)
 
-# 阶段二：动力学约束
+# 阶段二：动力学约束（欧拉法）
 dt2 = T2 / N2
 for k in range(N2):
-    k1 = dynamics(X2[:, k], F2[k], psi2[k])
-    k2 = dynamics(X2[:, k] + dt2 / 2 * k1, F2[k], psi2[k])
-    k3 = dynamics(X2[:, k] + dt2 / 2 * k2, F2[k], psi2[k])
-    k4 = dynamics(X2[:, k] + dt2 * k3, F2[k], psi2[k])
-    x_next = X2[:, k] + dt2 / 6 * (k1 + 2 * k2 + 2 * k3 + k4)
+    x_dot = dynamics(X2[:, k], F2[k], psi2[k])
+    x_next = X2[:, k] + dt2 * x_dot
     opti.subject_to(X2[:, k+1] == x_next)
 
 # 边界条件
@@ -161,94 +155,86 @@ opti.set_initial(m2, np.linspace(m1_guess[-1], m1_guess[-1] - 200, N2 + 1))
 s_opts = {"max_iter": 5000, "print_level": 5, "tol": 1e-6, "acceptable_tol": 1e-4}
 opti.solver('ipopt', {}, s_opts)
 
-try:
-    sol = opti.solve()
-    print("\n--- 联合优化求解成功！ ---\n")
-    
-    # 结果提取和绘图代码 (与您原始脚本相同)
-    r_turn = sol.value(r1[N1])
-    vr_turn = sol.value(vr1[N1])
-    vt_turn = sol.value(vt1[N1])
-    m_turn = sol.value(m1[N1])
-    h_turn = r_turn - R_moon_dim
-    
-    print("--- 最优转折点信息 ---")
-    print(f"转折点高度: {h_turn:.2f} m")
-    print(f"转折点径向速度 (v_y): {vr_turn:.2f} m/s")
-    print(f"转折点切向速度: {vt_turn:.2f} m/s")
-    print(f"转折点质量: {m_turn:.2f} kg")
-    
-    m_final = sol.value(m2[N2])
-    total_fuel_consumed = m0_dim - m_final
-    print("\n--- 全局最优结果 ---")
-    print(f"总燃料消耗: {total_fuel_consumed:.2f} kg")
-    print(f"总飞行时间: {sol.value(T1) + sol.value(T2):.2f} s")
-    
-    t1_opt = np.linspace(0, sol.value(T1), N1 + 1)
-    t2_opt = np.linspace(sol.value(T1), sol.value(T1) + sol.value(T2), N2 + 1)
-    t_axis = np.concatenate((t1_opt, t2_opt[1:]))
-    
-    r_opt = np.concatenate((sol.value(r1), sol.value(r2)[1:]))
-    vr_opt = np.concatenate((sol.value(vr1), sol.value(vr2)[1:]))
-    vt_opt = np.concatenate((sol.value(vt1), sol.value(vt2)[1:]))
-    m_opt = np.concatenate((sol.value(m1), sol.value(m2)[1:]))
-    
-    plt.figure(figsize=(18, 10))
-    plt.suptitle(f'两阶段联合优化轨迹 (最优转折高度: {h_turn:.1f} m)', fontsize=16)
-    
-    plt.subplot(2, 3, 1)
-    plt.plot(t_axis, (r_opt - R_moon_dim) / 1000)
-    plt.axvline(x=sol.value(T1), color='r', linestyle='--', label=f'转折点 T={sol.value(T1):.1f}s')
-    plt.title('高度变化'), plt.xlabel('时间 (s)'), plt.ylabel('高度 (km)'), plt.grid(True), plt.legend()
+sol = opti.solve()
+print("\n--- 联合优化求解成功！ ---\n")
 
-    plt.subplot(2, 3, 2)
-    plt.plot(t_axis, vr_opt, label='径向速度')
-    plt.plot(t_axis, vt_opt, label='切向速度')
-    plt.axvline(x=sol.value(T1), color='r', linestyle='--')
-    plt.title('速度分量'), plt.xlabel('时间 (s)'), plt.ylabel('速度 (m/s)'), plt.grid(True), plt.legend()
+# 结果提取和绘图代码 (与您原始脚本相同)
+r_turn = sol.value(r1[N1])
+vr_turn = sol.value(vr1[N1])
+vt_turn = sol.value(vt1[N1])
+m_turn = sol.value(m1[N1])
+h_turn = r_turn - R_moon_dim
 
-    plt.subplot(2, 3, 3)
-    plt.plot(t_axis, m_opt)
-    plt.axvline(x=sol.value(T1), color='r', linestyle='--')
-    plt.title('质量变化'), plt.xlabel('时间 (s)'), plt.ylabel('质量 (kg)'), plt.grid(True)
-    
-    plt.subplot(2, 3, 4)
-    f1_opt = np.full(N1, F_max_dim)
-    f2_opt = sol.value(F2)
-    t_f_axis = np.concatenate((t1_opt[:-1], t2_opt[:-1]))
-    f_opt = np.concatenate((f1_opt, f2_opt))
-    plt.step(t_f_axis, f_opt, where='post')
-    plt.axvline(x=sol.value(T1), color='r', linestyle='--')
-    plt.title('推力剖面'), plt.xlabel('时间 (s)'), plt.ylabel('推力 (N)'), plt.grid(True)
+print("--- 最优转折点信息 ---")
+print(f"转折点高度: {h_turn:.2f} m")
+print(f"转折点径向速度 (v_y): {vr_turn:.2f} m/s")
+print(f"转折点切向速度: {vt_turn:.2f} m/s")
+print(f"转折点质量: {m_turn:.2f} kg")
 
-    plt.subplot(2, 3, 5)
-    psi1_opt = sol.value(psi1)
-    psi2_opt = sol.value(psi2)
-    psi_opt = np.concatenate((psi1_opt, psi2_opt))
-    plt.plot(np.linspace(0, sol.value(T1), N1), np.degrees(psi1_opt))
-    plt.plot(np.linspace(sol.value(T1), sol.value(T1)+sol.value(T2), N2), np.degrees(psi2_opt))
-    plt.axvline(x=sol.value(T1), color='r', linestyle='--')
-    plt.title('推力角 ψ (相对切向)'), plt.xlabel('时间 (s)'), plt.ylabel('角度 (°)'), plt.grid(True)
+m_final = sol.value(m2[N2])
+total_fuel_consumed = m0_dim - m_final
+print("\n--- 全局最优结果 ---")
+print(f"总燃料消耗: {total_fuel_consumed:.2f} kg")
+print(f"总飞行时间: {sol.value(T1) + sol.value(T2):.2f} s")
 
-    plt.subplot(2, 3, 6)
-    dt_traj = np.diff(t_axis)
-    # 确保vt_opt和r_opt的长度与dt_traj匹配
-    vt_for_theta = vt_opt[:-1]
-    r_for_theta = r_opt[:-1]
-    d_theta_rad = (vt_for_theta / r_for_theta) * dt_traj
-    theta_traj_rad = np.cumsum(np.concatenate(([0], d_theta_rad)))
-    x_traj = r_opt * np.cos(theta_traj_rad)
-    y_traj = r_opt * np.sin(theta_traj_rad)
-    plt.plot(x_traj/1000, y_traj/1000, label='轨迹')
-    plt.plot(x_traj[N1]/1000, y_traj[N1]/1000, 'r*', markersize=10, label='最优转折点')
-    plt.title('轨迹投影'), plt.xlabel('X (km)'), plt.ylabel('Y (km)'), plt.axis('equal'), plt.grid(True), plt.legend()
-    
-    plt.tight_layout(rect=[0, 0, 1, 0.95])
-    plt.show()
+t1_opt = np.linspace(0, sol.value(T1), N1 + 1)
+t2_opt = np.linspace(sol.value(T1), sol.value(T1) + sol.value(T2), N2 + 1)
+t_axis = np.concatenate((t1_opt, t2_opt[1:]))
 
-except Exception as e:
-    print(f"\n--- 求解失败: {e} ---\n")
-    print("--- 提示：如果求解失败，可以尝试：")
-    print("1. 重新运行CUDA脚本，看是否能找到一个适应度值更低的解。")
-    print("2. 调整 `CUDA_Initial_Guess_Generator.py` 中的惩罚权重或DE算法参数。")
-    print("3. 检查CasADi模型中的约束是否过于严格。")
+r_opt = np.concatenate((sol.value(r1), sol.value(r2)[1:]))
+vr_opt = np.concatenate((sol.value(vr1), sol.value(vr2)[1:]))
+vt_opt = np.concatenate((sol.value(vt1), sol.value(vt2)[1:]))
+m_opt = np.concatenate((sol.value(m1), sol.value(m2)[1:]))
+
+plt.figure(figsize=(18, 10))
+plt.suptitle(f'两阶段联合优化轨迹 (最优转折高度: {h_turn:.1f} m)', fontsize=16)
+
+plt.subplot(2, 3, 1)
+plt.plot(t_axis, (r_opt - R_moon_dim) / 1000)
+plt.axvline(x=sol.value(T1), color='r', linestyle='--', label=f'转折点 T={sol.value(T1):.1f}s')
+plt.title('高度变化'), plt.xlabel('时间 (s)'), plt.ylabel('高度 (km)'), plt.grid(True), plt.legend()
+
+plt.subplot(2, 3, 2)
+plt.plot(t_axis, vr_opt, label='径向速度')
+plt.plot(t_axis, vt_opt, label='切向速度')
+plt.axvline(x=sol.value(T1), color='r', linestyle='--')
+plt.title('速度分量'), plt.xlabel('时间 (s)'), plt.ylabel('速度 (m/s)'), plt.grid(True), plt.legend()
+
+plt.subplot(2, 3, 3)
+plt.plot(t_axis, m_opt)
+plt.axvline(x=sol.value(T1), color='r', linestyle='--')
+plt.title('质量变化'), plt.xlabel('时间 (s)'), plt.ylabel('质量 (kg)'), plt.grid(True)
+
+plt.subplot(2, 3, 4)
+f1_opt = np.full(N1, F_max_dim)
+f2_opt = sol.value(F2)
+t_f_axis = np.concatenate((t1_opt[:-1], t2_opt[:-1]))
+f_opt = np.concatenate((f1_opt, f2_opt))
+plt.step(t_f_axis, f_opt, where='post')
+plt.axvline(x=sol.value(T1), color='r', linestyle='--')
+plt.title('推力剖面'), plt.xlabel('时间 (s)'), plt.ylabel('推力 (N)'), plt.grid(True)
+
+plt.subplot(2, 3, 5)
+psi1_opt = sol.value(psi1)
+psi2_opt = sol.value(psi2)
+psi_opt = np.concatenate((psi1_opt, psi2_opt))
+plt.plot(np.linspace(0, sol.value(T1), N1), np.degrees(psi1_opt))
+plt.plot(np.linspace(sol.value(T1), sol.value(T1)+sol.value(T2), N2), np.degrees(psi2_opt))
+plt.axvline(x=sol.value(T1), color='r', linestyle='--')
+plt.title('推力角 ψ (相对切向)'), plt.xlabel('时间 (s)'), plt.ylabel('角度 (°)'), plt.grid(True)
+
+plt.subplot(2, 3, 6)
+dt_traj = np.diff(t_axis)
+# 确保vt_opt和r_opt的长度与dt_traj匹配
+vt_for_theta = vt_opt[:-1]
+r_for_theta = r_opt[:-1]
+d_theta_rad = (vt_for_theta / r_for_theta) * dt_traj
+theta_traj_rad = np.cumsum(np.concatenate(([0], d_theta_rad)))
+x_traj = r_opt * np.cos(theta_traj_rad)
+y_traj = r_opt * np.sin(theta_traj_rad)
+plt.plot(x_traj/1000, y_traj/1000, label='轨迹')
+plt.plot(x_traj[N1]/1000, y_traj[N1]/1000, 'r*', markersize=10, label='最优转折点')
+plt.title('轨迹投影'), plt.xlabel('X (km)'), plt.ylabel('Y (km)'), plt.axis('equal'), plt.grid(True), plt.legend()
+
+plt.tight_layout(rect=[0, 0, 1, 0.95])
+plt.show()
